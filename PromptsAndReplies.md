@@ -21,9 +21,15 @@
 
 ## Prompt 3
 
-- Introduce a new BGP address family (AFI/SAFI) named crypto_routes.
 - Document any code changes required.
-- Changes to be reviewed before compilation.
+- Create a validation plan to test code changes
+- Keep adding more Prompts and Responses to `ClaudePromptAndReplies.md`.
+
+## Prompt 4
+
+- Go ahead with code changes.
+- Validate code changes with structured reasoning.
+- Keep adding more Prompts and Responses to `ClaudePromptAndReplies.md`.
 
 ---
 

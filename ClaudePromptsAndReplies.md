@@ -518,3 +518,69 @@ make check-TESTS TESTS='tests/bgpd/test_mp_attr'   # targeted unit test
 | 10 | Wrote `REPO_ANALYSIS_LOG.md` and `ClaudePromptsAndReplies.md` | Write | This document. |
 
 **Not done (out of scope for Prompt 1):** no build was run, no code changed, HLD/LLD (Prompt 2) and the `crypto_routes` implementation (Prompt 3) are separate deliverables.
+
+---
+
+## Prompt 2
+
+> - From Analysis, Build a High Level Design Document v1 (in markdown) & a Low Level Design Document v1 (in markdown)
+> - Build a reference execution & testing plan for our Problem Statement.
+> - Showcase changes in HLDv1 and LLDv1 for our Problem Statement.
+
+### Response 2 — Summary
+
+Produced three documents at the repo root:
+
+| File | Contents |
+|---|---|
+| `HLD_v1.md` | High-Level Design v1 for the `crypto_routes` SAFI — scope, assumed semantics, design principles, component + data-flow view, (AFI,SAFI) model, NFRs, alternatives considered, risks, phasing, acceptance criteria. **§9 is the HLD-level design-delta showcase** (before/after config + enum, data-flow delta table, change footprint, reference commit decomposition). |
+| `LLD_v1.md` | Low-Level Design v1 — file-by-file / function / enum / `switch`-arm change **map** with diff-style snippets, "what is NOT changed and why", build/codegen notes, a **pre-compilation review checklist**, full `switch (safi)` site inventory (Appendix A), "if a new AFI is truly required" (Appendix B). §3 + §6 are the LLD-level showcase. |
+| `EXECUTION_TESTING_PLAN.md` | Reference execution & testing plan — env setup, build (with the `-Wswitch` checklist loop), static gates, unit tests to add, full topotest design (`tests/topotests/bgp_crypto_routes/`, 3-router topology, 11 assertions), regression sweep, ASan/leak run, manual smoke, CI expectations, acceptance matrix, rollback, 7-day timeline. |
+
+#### Design decisions (Prompt 2)
+
+- **New SAFI, not new AFI.** `SAFI_CRYPTO_ROUTES = 10` (`SAFI_MAX` 10→11) under existing `AFI_IP`/`AFI_IP6`. A new AFI would resize `[AFI_MAX]` arrays across all of `lib/` and every daemon for no benefit — crypto routes are IP prefixes.
+- **Reuse unicast NLRI.** `bgp_nlri_parse()` dispatches `SAFI_CRYPTO_ROUTES` to the existing `bgp_nlri_parse_ip()`. No new wire format, no new parser, no new RIB type, **no `bgp_update()` signature change**.
+- **Control-plane only in v1.** Deliberately excluded from the `bgp_zebra` FIB-install gate — like BGP-LS / FlowSpec / `SAFI_UNREACH`.
+- **IANA SAFI 241** (Private-Use range 241–254) — no squatting on an unassigned public number; configurable value deferred to v2.
+- **Template:** the merged `SAFI_UNREACH` work (15-commit series, `023da6de44 … 1b2f34e74f`, April 2026) is a near-exact precedent; `crypto_routes` is smaller (~450–550 LoC vs ~4,900) because it reuses unicast NLRI instead of writing a TLV parser + UI-RIB.
+
+#### Actions taken (Prompt 2)
+
+1. Deep-dived `bgpd/` and `lib/` for the concrete AFI/SAFI touch points (`lib/zebra.h`, `lib/iana_afi.h`, `lib/prefix.c`, `bgpd/bgpd.{c,h}`, `bgp_packet.c`, `bgp_open.c`, `bgp_attr.c`, `bgp_route.c`, `bgp_vty.c`, `bgp_debug.c`, `bgp_updgrp.h`).
+2. Mined git history for the `SAFI_UNREACH` series and captured the per-commit file lists as the reference decomposition.
+3. Confirmed `SAFI_MAX` bump auto-resizes ~105 `[AFI_MAX][SAFI_MAX]` arrays and that `bgp_create()`'s `FOREACH_AFI_SAFI` loop auto-allocates the new RIB.
+4. Wrote the three deliverables. No FRR source modified; no build run.
+
+---
+
+## Prompt 3
+
+> - Document any code changes required to complete implementing crypto_routes to FRRouting.
+> - Create a validation plan to test code changes.
+> - Keep adding more Prompts and Responses to `ClaudePromptAndReplies.md`.
+
+### Response 3 — Summary
+
+Produced two documents at the repo root:
+
+| File | Contents |
+|---|---|
+| `CODE_CHANGES.md` | The definitive, **apply-ready** code-change spec — every file, every hunk, in 9-commit order, with real diff snippets verified against the current source (`bc8971168b`). Covers: `lib/` core (enum, IANA map, `safi2str`, node enum), `bgpd/bgpd.{c,h}` (`enum bgp_af_index`, `afindex()`, peer-group helpers, RIB/maxpaths), capability display, `bgp_attr.c` (4 `switch` arms + `nh_afi`), `bgp_packet.c` dispatch, `bgp_route.c` (`bgp_rd_from_dest`, FIB boundary), rfapi arms, full CLI (nodes, grammar, `bgp_node_*`, config-write, `install_element` block, `vtysh`), `show`, `debug`, docs, tests. Includes an **exhaustive `switch`/`if` site checklist** (§11) and a "deliberately NOT changed" list (§12). |
+| `VALIDATION_PLAN.md` | Change-traceable validation — 10 validation gates (G0–G9), a **structured-reasoning template** to complete per change group (with a worked example for the NLRI dispatch), a **change → risk → validation → pass-criterion traceability matrix**, the detailed topotest spec (13 assertions incl. the explicit "no FIB install" negative test), negative/boundary cases, regression selection with rationale, a sign-off checklist, and a baseline-capture procedure to run before touching code. |
+
+#### Key points established (Prompt 3)
+
+- **18 files** change; ~450–550 LoC non-test. No new source file, no `subdir.am` / `configure.ac` change, no new dependency.
+- **14 exhaustive `switch` sites** across `lib/` + `bgpd/` (+ 5 rfapi) get a `case SAFI_CRYPTO_ROUTES:` arm — `-Wswitch -Werror` makes each a build failure until done, so the compiler is the primary checklist.
+- **`bgp_update()` / `bgp_nlri_parse_ip()` signatures unchanged** — verified the existing call already passes `NULL` for the trailing `unreach` params, so crypto-routes rides the unicast path untouched.
+- **RIB allocation + free are automatic** — `bgp_create()` / `bgp_free()` iterate `FOREACH_AFI_SAFI`.
+- **`SAFI_MAX` / `BGP_AF_MAX` bump** is the main regression risk → full `bgp_*`/`evpn_*`/`bgp_gr_*` topotest sweep + ASan + leak check are merge gates; baseline captured first.
+- The FIB boundary is an **explicit test assertion** (topotest T7: `show ip route` has no crypto-routes entry), not an assumption.
+
+#### Actions taken (Prompt 3)
+
+1. Pulled the exact upstream diffs for the `SAFI_UNREACH` plumbing commits (`61f097d557` capability, `4154e91508` CLI + nodes + vtysh, `1a004a0281` attr/packet, `04ba8c4abb` route processing, `023da6de44` lib) and translated each hunk to `SAFI_CRYPTO_ROUTES`, dropping the TLV/UI-RIB parts crypto-routes doesn't need.
+2. Verified every current `switch (safi)` / `switch (packet->safi)` site in `bgpd/` + `lib/` and the non-switch OR-chains in `bgpd.h`.
+3. Confirmed the "not changed" set: zebra gates, NHT, GR-NSF, `bgp_path_info_extra`, `bgp_update()` signature.
+4. Wrote `CODE_CHANGES.md` and `VALIDATION_PLAN.md`. **No FRR source modified; no build run** — that is Prompt 4 ("Go ahead with code changes").
