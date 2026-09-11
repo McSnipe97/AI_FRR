@@ -584,3 +584,72 @@ Produced two documents at the repo root:
 2. Verified every current `switch (safi)` / `switch (packet->safi)` site in `bgpd/` + `lib/` and the non-switch OR-chains in `bgpd.h`.
 3. Confirmed the "not changed" set: zebra gates, NHT, GR-NSF, `bgp_path_info_extra`, `bgp_update()` signature.
 4. Wrote `CODE_CHANGES.md` and `VALIDATION_PLAN.md`. **No FRR source modified; no build run** — that is Prompt 4 ("Go ahead with code changes").
+
+---
+
+## Prompt 4
+
+> - Go ahead with code changes.
+> - Validate code changes versus the Validation Plan with structured reasoning.
+> - Keep adding more Prompts and Responses to `ClaudePromptAndReplies.md`.
+
+### Response 4 — Summary
+
+**Applied the `crypto_routes` SAFI implementation** to the FRR submodule on a new
+branch `crypto-routes-safi` (off `bc8971168b`), following `CODE_CHANGES.md`, and
+**validated it statically against `VALIDATION_PLAN.md`** (full compile/topotest
+gates could not run on this macOS host — FRR is Linux-only, no toolchain).
+
+#### Code changes (20 files modified, 2 new)
+
+| Area | Files |
+|---|---|
+| `lib` core | `lib/zebra.h` (`SAFI_CRYPTO_ROUTES=10`, `SAFI_MAX=11`), `lib/iana_afi.h` (`IANA_SAFI_CRYPTO_ROUTES=241` + 2 map arms), `lib/prefix.c` (`safi2str`), `lib/command.h` (2 CLI nodes) |
+| `bgpd` core | `bgpd.h` (`enum bgp_af_index` +2, `afindex()` ×4, 2 OR-chains), `bgpd.c` (maxpaths pin) |
+| `bgpd` protocol | `bgp_open.c` (capability display ×2), `bgp_attr.c` (nexthop/prefix/size switches ×4 + `nh_afi`), `bgp_packet.c` (`bgp_nlri_parse` → `bgp_nlri_parse_ip`) |
+| `bgpd` route | `bgp_route.c` (`bgp_rd_from_dest`, ext-comm JSON, `network`/`table-map` install) — **FIB gate deliberately untouched** |
+| `bgpd` CLI | `bgp_vty.c` (~154 lines: nodes, grammar, `bgp_node_*`, `bgp_vty_safi_from_str`, `argv_find_and_parse_safi`, config-write, ~40 `install_element`), `bgp_vty.h` (grammar macros) |
+| `bgpd` rfapi | `rfapi_import.c` ×3, `rfapi_monitor.c` ×2 (no-op `switch` arms for `--enable-bgp-vnc`) |
+| `bgpd` debug | `bgp_debug.c` / `.h` (`debug bgp crypto-routes`) |
+| `vtysh` | `vtysh.c` (2 nodes + `DEFUNSH` navigation + registration) |
+| docs | `doc/user/crypto-routes.rst` (new), `doc/user/bgp.rst`, `doc/user/subdir.am` |
+| tests | `tests/bgpd/test_capability.c` (`crypto_routes_safi_test()`, 10 asserts), `tests/topotests/bgp_crypto_routes/` (new: 3-router topo + `bgpd.conf`/`zebra.conf` ×3 + `test_bgp_crypto_routes.py`, 11 test functions) |
+
+**Not changed** (verified): the `bgp_process_main_one()` zebra/FIB-install gate,
+NHT, GR-NSF, `struct bgp_path_info_extra`, `bgp_update()`/`bgp_nlri_parse_ip()`
+signatures, `bgpd/subdir.am`, `configure.ac`, `mgmtd`/`yang`.
+
+#### Validation (`VALIDATION_RESULTS.md`)
+
+- **G1 (compile):** static-only. All **24 `switch (safi)` arms across 10 files** +
+  3 OR-chains enumerated and patched; every new symbol's declaration site
+  verified; DEFUN/DEFPY help-string arity re-balanced and checked. High
+  confidence it compiles (the change is almost entirely `case` labels the
+  compiler would reject if missing; cross-checked against the merged
+  `SAFI_UNREACH` series that did the identical 9→10 bump).
+- **G9 (structured reasoning):** complete — the `VALIDATION_PLAN.md §3` template
+  filled for all 9 change groups (intent / mechanism / exhaustiveness /
+  invariants / failure-modes table / blast radius / test evidence).
+- **G2/G3/G4/G5/G6/G7/G8:** blocked by the macOS host; tests + docs authored,
+  actions carried forward to Linux CI. `EXECUTION_TESTING_PLAN.md` §2–§5 is the
+  runbook.
+- **4 defects found and fixed in-session** (help-string arity ×2, an unneeded
+  widening the LLD called for that inspection showed was already correct, a
+  missing enum trailing comma) — logged in `VALIDATION_RESULTS.md §5`.
+- Highest-radius change flagged: the `lib/command.h` `enum node_type` insertion
+  shifts `BFD_NODE`+ by 2 → every daemon + `vtysh` must rebuild together (same as
+  `SAFI_UNREACH`); full (not just `bgp_*`) topotest suite is the real check.
+
+#### Actions taken (Prompt 4)
+
+1. Created branch `crypto-routes-safi` in the `frr/` submodule.
+2. Applied all hunks from `CODE_CHANGES.md` commits 1–9, reading each target site
+   fresh before editing.
+3. Re-grepped every `switch (safi)` / `case SAFI_*` / OR-chain post-change to
+   confirm completeness; reviewed the full `git diff` hunk-by-hunk.
+4. Authored the unit-test additions and the topotest suite.
+5. Wrote `VALIDATION_RESULTS.md` with the gate-by-gate status and the structured
+   reasoning.
+6. **Changes are staged on the branch but not committed** (per standing
+   instruction to commit only when asked); the 9-commit breakdown in
+   `CODE_CHANGES.md §13` is ready to apply on request.
